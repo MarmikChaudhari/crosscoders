@@ -30,8 +30,8 @@ class RunningStatWelford:
     """
     Streaming (online) mean / variance with Welford's algorithm.
 
-    Works for arbitrary feature shapes – e.g. a vector of size D, a 2-D image
-    channel grid, … anything except that the first axis of the update batch
+    Works for arbitrary feature shapes - e.g. a vector of size D, a 2-D image
+    channel grid, ... anything except that the first axis of the update batch
     is interpreted as the *sample* axis.
 
     Args:
@@ -222,6 +222,7 @@ class ActivationShard:
 
 def save_shard(activations, store_dir, shard_count, name, io):
     print(f"Storing activation shard ({activations.shape})")
+    os.makedirs(store_dir, exist_ok=True)
     memmap_file = os.path.join(store_dir, f"shard_{shard_count}.memmap")
     memmap_file_meta = memmap_file.replace(".memmap", ".meta")
     dtype = activations.dtype

@@ -34,6 +34,7 @@ def test_activation_shard_float16(temp_dir):
 
     # Check the content
     loaded_activations = shard[:]
+    print(f'activations: {loaded_activations}')
     assert th.equal(activations, loaded_activations)
 
 
@@ -267,8 +268,8 @@ def test_activation_cache_with_normalizer(temp_dir):
         cache.std, computed_std, atol=1e-5, rtol=1e-5
     ), "Cached std doesn't match computed std"
 
-    print(f"✓ Successfully tested ActivationCache with {len(cache)} activations")
-    print(f"✓ Mean shape: {cache.mean.shape}, Std shape: {cache.std.shape}")
+    print(f"tested ActivationCache with {len(cache)} activations")
+    print(f"Mean shape: {cache.mean.shape}, Std shape: {cache.std.shape}")
 
 
 def test_sequence_ranges_no_bos_token(temp_dir):
