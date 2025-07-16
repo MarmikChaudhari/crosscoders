@@ -503,7 +503,7 @@ def test_activation_cache_slice_indexing_cross_shard(temp_dir):
         assert slice_result.shape[0] == expected_length, \
             f"Expected slice length {expected_length}, got {slice_result.shape[0]}"
         
-        print(f"✓ Cross-shard slice test 1 passed: indices {start_idx}:{end_idx}")
+        print(f"Cross-shard slice test 1 passed: indices {start_idx}:{end_idx}")
 
     # Test 2: Slice that spans multiple shards
     if len(cache.shards) >= 3:
@@ -522,7 +522,7 @@ def test_activation_cache_slice_indexing_cross_shard(temp_dir):
         assert slice_result.shape[0] == expected_length, \
             f"Expected multi-shard slice length {expected_length}, got {slice_result.shape[0]}"
         
-        print(f"✓ Multi-shard slice test passed: indices {start_idx}:{end_idx}")
+        print(f"Multi-shard slice test passed: indices {start_idx}:{end_idx}")
 
     # Test 3: Slice with step parameter across shards
     if total_size >= 50:
@@ -540,7 +540,7 @@ def test_activation_cache_slice_indexing_cross_shard(temp_dir):
         assert slice_result.shape[0] == expected_length, \
             f"Expected stepped slice length {expected_length}, got {slice_result.shape[0]}"
         
-        print(f"✓ Stepped slice test passed: indices {start_idx}:{end_idx}:{step}")
+        print(f"Stepped slice test passed: indices {start_idx}:{end_idx}:{step}")
 
     # Test 4: Edge cases - slice at boundaries
     if len(cache.shards) >= 2:
@@ -553,12 +553,12 @@ def test_activation_cache_slice_indexing_cross_shard(temp_dir):
             assert th.allclose(slice_result, individual_results, atol=1e-5, rtol=1e-5), \
                 f"Boundary slice result doesn't match individual indexing"
             
-            print(f"✓ Boundary slice test passed: starting at shard boundary {boundary_idx}")
+            print(f"Boundary slice test passed: starting at shard boundary {boundary_idx}")
 
     # Test 5: Empty slice
     empty_slice = cache[10:10]
     assert empty_slice.shape[0] == 0, f"Expected empty slice, got shape {empty_slice.shape}"
-    print("✓ Empty slice test passed")
+    print("Empty slice test passed")
     
 
-    print(f"✓ All slice indexing tests passed for cache with {len(cache.shards)} shards")
+    print(f"All slice indexing tests passed for cache with {len(cache.shards)} shards")
