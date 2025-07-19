@@ -9,11 +9,10 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-n_samples_simple_stories = 5 # 1_000_000 
-n_samples_code = 2 # 210_000 
-n_samples_arxiv = 2 # 21_000 # down sample as avg sample length of arxiv is way higher than other subsets
+n_samples_simple_stories = 5 # 50_000 
+n_samples_code = 2 # 10_500 
+n_samples_arxiv = 2 # 1050
 test_split = 0.05
-
 
 
 def get_dataset_tokenizer(n_samples_simple_stories=n_samples_simple_stories,n_samples_code=n_samples_code,n_samples_arxiv=n_samples_arxiv,test_split=test_split):
@@ -70,11 +69,11 @@ def get_dataset_tokenizer(n_samples_simple_stories=n_samples_simple_stories,n_sa
 
 
 
-combined_ds = get_dataset_tokenizer()
+combined_ds = get_dataset_tokenizer(n_samples_simple_stories=n_samples_simple_stories, n_samples_code=n_samples_code, n_samples_arxiv=n_samples_arxiv)
 
 dataset = combined_ds["text"]  # Extract text list from the Dataset object
 
-tokenizer = AutoTokenizer.from_pretrained("gpt2")
+tokenizer = AutoTokenizer.from_pretrained("Marmik/tiny-mixtral-5l-active", trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
     "gpt2", device_map="auto", torch_dtype=th.float32
 )
@@ -83,14 +82,29 @@ model = LanguageModel(model, torch_dtype=th.float32, tokenizer=tokenizer)
 model.tokenizer.pad_token = model.tokenizer.eos_token
 
 # get a transformer block to extract activations from
-target_layer = model.transformer.h[6]  # Middle layer of GPT-2
-submodule_name = "transformer_h_6"
+# target_layer = model.transformer.h[6]  
+target_layer = [
+    model.model.layers[1].ffn,
+    model.model.layers[2].ffn,
+    model.model.layers[3].ffn,
+    model.model.layers[4].ffn,
+] # post mlp output, use model.model for custom models.
+# submodule_name = "transformer_h_6"
+submodule_name = [
+    "l1_moe_out",
+    "l2_moe_out",
+    "l3_moe_out",
+    "l4_moe_out",
+]
 
 # parameters for activation collection
-batch_size = 2
-context_len = 64
+batch_size = 256 # 256 as the underlying model or 512 as only forward pass or higher
+context_len = 1024 # 1024 as max_seq_len in the underlying model
 d_model = 768  # GPT-2 hidden size
-temp_dir = "dataset_activations"
+shard_size = 10_000_000 # 10_000_000 to 15_000_000
+temp_dir = "moe_active_activations"
+io = "out"
+max_total_tokens = 75_000_000 # total toks to collect, 75_000_000
 
 # collect activations using ActivationCache
 ActivationCache.collect(
@@ -101,9 +115,9 @@ ActivationCache.collect(
     store_dir=temp_dir,
     batch_size=batch_size,
     context_len=context_len,
-    shard_size=1000,  # Small shard size for testing
+    shard_size=shard_size, 
     d_model=d_model,
-    io="out",
-    max_total_tokens=10000,
+    io=io,
+    max_total_tokens=max_total_tokens,
     store_tokens=True,
 )
