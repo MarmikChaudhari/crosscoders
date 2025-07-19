@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 n_samples_simple_stories = 60_000 # 50_000/ 60_000
 n_samples_code = 12_600 # 10_500/ 12_600
-n_samples_arxiv = 1250 # 1050/ 1250
+n_samples_arxiv = 1250 # 1050/ 1250, the config corresponds to 27M tokens
 test_split = 0.05
 
 
@@ -91,6 +91,8 @@ target_layer = (
     model.model.layers[3].ffn,
     model.model.layers[4].ffn,
  ) # post mlp output, use model.model for custom models.
+
+
 # submodule_name = "transformer_h_6"
 submodule_name = (
     "l0_moe",
@@ -99,6 +101,7 @@ submodule_name = (
     "l3_moe",
     "l4_moe",
 )
+
 
 # parameters for activation collection
 batch_size = 256 # 256 as the underlying model or 512 as only forward pass or higher, do batch size 1 when using tiny-gpt
