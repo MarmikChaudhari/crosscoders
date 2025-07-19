@@ -7,11 +7,12 @@ from nnsight import LanguageModel
 from dictionary_learning.cache import ActivationCache
 import sys
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-n_samples_simple_stories = 5 # 50_000 
-n_samples_code = 2 # 10_500 
-n_samples_arxiv = 2 # 1050
+n_samples_simple_stories = 60_000 # 50_000/ 60_000
+n_samples_code = 12_600 # 10_500/ 12_600
+n_samples_arxiv = 1250 # 1050/ 1250
 test_split = 0.05
 
 
@@ -84,6 +85,7 @@ model.tokenizer.pad_token = model.tokenizer.eos_token
 # get a transformer block to extract activations from
 # target_layer = model.transformer.h[6]  
 target_layer = (
+    model.model.layers[0].ffn,
     model.model.layers[1].ffn,
     model.model.layers[2].ffn,
     model.model.layers[3].ffn,
@@ -91,6 +93,7 @@ target_layer = (
  ) # post mlp output, use model.model for custom models.
 # submodule_name = "transformer_h_6"
 submodule_name = (
+    "l0_moe",
     "l1_moe",
     "l2_moe",
     "l3_moe",
@@ -98,11 +101,11 @@ submodule_name = (
 )
 
 # parameters for activation collection
-batch_size = 256 # 256 as the underlying model or 512 as only forward pass or higher
+batch_size = 256 # 256 as the underlying model or 512 as only forward pass or higher, do batch size 1 when using tiny-gpt
 context_len = 1024 # 1024 as max_seq_len in the underlying model
 d_model = 768  # GPT-2 hidden size
 shard_size = 10_000_000 # 10_000_000 to 15_000_000
-temp_dir = "moe_active_activations"
+temp_dir = "activations/mixtral-5l-active-75M"
 io = "out"
 max_total_tokens = 75_000_000 # total toks to collect, 75_000_000
 
