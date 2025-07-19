@@ -73,9 +73,9 @@ combined_ds = get_dataset_tokenizer(n_samples_simple_stories=n_samples_simple_st
 
 dataset = combined_ds["text"]  # Extract text list from the Dataset object
 
-tokenizer = AutoTokenizer.from_pretrained("Marmik/tiny-mixtral-5l-active", trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
 model = AutoModelForCausalLM.from_pretrained(
-    "gpt2", device_map="auto", torch_dtype=th.float32
+    "Marmik/tiny-mixtral-5l-active", device_map="auto", torch_dtype=th.float32, trust_remote_code=True
 )
 
 model = LanguageModel(model, torch_dtype=th.float32, tokenizer=tokenizer)
@@ -83,19 +83,19 @@ model.tokenizer.pad_token = model.tokenizer.eos_token
 
 # get a transformer block to extract activations from
 # target_layer = model.transformer.h[6]  
-target_layer = [
+target_layer = (
     model.model.layers[1].ffn,
     model.model.layers[2].ffn,
     model.model.layers[3].ffn,
     model.model.layers[4].ffn,
-] # post mlp output, use model.model for custom models.
+ ) # post mlp output, use model.model for custom models.
 # submodule_name = "transformer_h_6"
-submodule_name = [
-    "l1_moe_out",
-    "l2_moe_out",
-    "l3_moe_out",
-    "l4_moe_out",
-]
+submodule_name = (
+    "l1_moe",
+    "l2_moe",
+    "l3_moe",
+    "l4_moe",
+)
 
 # parameters for activation collection
 batch_size = 256 # 256 as the underlying model or 512 as only forward pass or higher
@@ -109,8 +109,8 @@ max_total_tokens = 75_000_000 # total toks to collect, 75_000_000
 # collect activations using ActivationCache
 ActivationCache.collect(
     data=dataset,
-    submodules=(target_layer,),
-    submodule_names=(submodule_name,),
+    submodules=target_layer,
+    submodule_names=submodule_name,
     model=model,
     store_dir=temp_dir,
     batch_size=batch_size,
