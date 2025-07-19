@@ -566,7 +566,12 @@ class ActivationCache:
             model.tokenizer.padding_side = "right"
 
         print("Collecting activations...")
-        for batch in tqdm(dataloader, desc="Collecting activations"):
+        
+        # Clear GPU memory before starting collection
+        if th.cuda.is_available():
+            th.cuda.empty_cache()
+            
+        for batch_idx, batch in enumerate(tqdm(dataloader, desc="Collecting activations")):
             tokens = model.tokenizer(
                 batch,
                 max_length=context_len,
@@ -649,8 +654,16 @@ class ActivationCache:
                     assert len(tokens_cache[-1]) == activation_cache[0][-1].shape[0]
                 assert activation_cache[0][-1].shape[0] == store_mask.sum().item()
                 current_size += activation_cache[0][-1].shape[0]
+                
+                # Clear GPU memory after processing activations from trace context
+                if th.cuda.is_available():
+                    th.cuda.empty_cache()
             else:
                 current_size += store_mask.sum().item()
+
+            # Clear GPU memory every 10 batches to prevent gradual accumulation
+            if th.cuda.is_available() and (batch_idx + 1) % 10 == 0:
+                th.cuda.empty_cache()
 
             if current_size > shard_size:
                 if shape is not None and not overwrite:
@@ -669,6 +682,11 @@ class ActivationCache:
                     )
                     for i in range(len(submodules)):
                         running_stats[i].save_state(store_sub_dirs[i])
+                        
+                # Clear GPU memory after shard operations
+                if th.cuda.is_available():
+                    th.cuda.empty_cache()
+                    
                 shard_count += 1
 
                 total_size += current_size
@@ -745,6 +763,10 @@ class ActivationCache:
             th.save(
                 running_stats[i].std().cpu(), os.path.join(store_sub_dirs[i], "std.pt")
             )
+
+        # Final GPU memory cleanup
+        if th.cuda.is_available():
+            th.cuda.empty_cache()
 
         ActivationCache.cleanup_multiprocessing()
         print(f"Finished collecting activations. Total size: {total_size}")
