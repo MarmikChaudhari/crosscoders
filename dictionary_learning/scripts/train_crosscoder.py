@@ -27,7 +27,7 @@ if __name__ == "__main__":
     parser.add_argument("--expansion-factor", type=int, default=32)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--workers", type=int, default=24)
-    parser.add_argument("--mu", type=float, default=1e-1)
+    parser.add_argument("--mu", type=float, default=3e-2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--validate-every-n-steps", type=int, default=10000)
@@ -95,6 +95,9 @@ if __name__ == "__main__":
             "norm_init_scale": args.norm_init_scale,
             "init_with_transpose": args.init_with_transpose,
             "encoder_layers": args.encoder_layers,
+            "code_normalization": "MIXED",
+            "code_normalization_alpha_sae": 0.7,
+            "code_normalization_alpha_cc": 0.3,
         },
         "pretrained_ae": (
             CrossCoder.from_pretrained(args.pretrained)
