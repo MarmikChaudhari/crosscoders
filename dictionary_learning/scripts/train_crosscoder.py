@@ -26,7 +26,7 @@ if __name__ == "__main__":
     parser.add_argument("--disable-wandb", action="store_true")
     parser.add_argument("--expansion-factor", type=int, default=32)
     parser.add_argument("--batch-size", type=int, default=2048)
-    parser.add_argument("--workers", type=int, default=32)
+    parser.add_argument("--workers", type=int, default=24)
     parser.add_argument("--mu", type=float, default=1e-1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-steps", type=int, default=None)
@@ -42,6 +42,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset", type=str, nargs="+", default=["fineweb", "lmsys_chat"]
     )
+    parser.add_argument("--epochs", type=int, default=1)
     args = parser.parse_args()
 
     print(f"Training args: {args}")
@@ -66,6 +67,8 @@ if __name__ == "__main__":
         )
 
     dataset = th.utils.data.ConcatDataset(caches)
+    if args.epochs > 1:
+        dataset = th.utils.data.ConcatDataset([dataset] * args.epochs)
 
     activation_dim = dataset[0].shape[1]
     dictionary_size = args.expansion_factor * activation_dim
@@ -83,7 +86,7 @@ if __name__ == "__main__":
         "warmup_steps": 1000,
         "layer": args.layer,
         "lm_name": f"{args.instruct_model}-{args.base_model}",
-        "compile": True,
+        "compile": False,
         "wandb_name": f"L{args.layer}-mu{args.mu:.1e}-lr{args.lr:.0e}"
         + (f"-{args.run_name}" if args.run_name is not None else ""),
         "l1_penalty": args.mu,
