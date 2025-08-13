@@ -43,6 +43,9 @@ if __name__ == "__main__":
         "--dataset", type=str, nargs="+", default=["fineweb", "lmsys_chat"]
     )
     parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--shared-features", type=int, default=0, help="Number of features designated as shared")
+    parser.add_argument("--shared-sparsity-penalty", type=float, default=None, help="λs - reduced penalty for shared features")
+    parser.add_argument("--standard-sparsity-penalty", type=float, default=None, help="λf - normal penalty for standard features")
     args = parser.parse_args()
 
     print(f"Training args: {args}")
@@ -90,6 +93,9 @@ if __name__ == "__main__":
         "wandb_name": f"L{args.layer}-mu{args.mu:.1e}-lr{args.lr:.0e}"
         + (f"-{args.run_name}" if args.run_name is not None else ""),
         "l1_penalty": args.mu,
+        "shared_features": args.shared_features,
+        "shared_sparsity_penalty": args.shared_sparsity_penalty,
+        "standard_sparsity_penalty": args.standard_sparsity_penalty,
         "dict_class_kwargs": {
             "same_init_for_all_layers": args.same_init_for_all_layers,
             "norm_init_scale": args.norm_init_scale,

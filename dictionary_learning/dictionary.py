@@ -1080,6 +1080,7 @@ class CrossCoder(Dictionary, NormalizableMixin):
         activation_mean: th.Tensor | None = None,
         activation_std: th.Tensor | None = None,
         target_rms: float | None = None,
+        shared_features: int = 0,  # Number of features designated as shared
     ):
         """
         Initialize a CrossCoder sparse autoencoder.
@@ -1100,6 +1101,7 @@ class CrossCoder(Dictionary, NormalizableMixin):
             activation_mean: Optional mean tensor for input/output activation normalization
             activation_std: Optional std tensor for input/output activation normalization
             target_rms: Optional target RMS for input/output activation normalization
+            shared_features: Number of features designated as shared (default: 0)
         """
         # First initialize the base classes that don't take normalization parameters
         super().__init__(
@@ -1116,6 +1118,11 @@ class CrossCoder(Dictionary, NormalizableMixin):
         self.dict_size = dict_size
         self.num_layers = num_layers
         self.latent_processor = latent_processor
+        
+        # Shared feature budget setup
+        self.shared_features = shared_features
+        self.shared_feature_indices = set(range(shared_features))  # First N features are shared
+        self.standard_feature_indices = set(range(shared_features, dict_size))
         if isinstance(code_normalization, str):
             code_normalization = CodeNormalization.from_string(code_normalization)
         else:
@@ -1151,6 +1158,19 @@ class CrossCoder(Dictionary, NormalizableMixin):
             "code_normalization_id", th.tensor(code_normalization.value)
         )
         self.decoupled_code = self.code_normalization == CodeNormalization.DECOUPLED
+
+    def _enforce_shared_weights(self):
+        """
+        Enforce W_dec_A = W_dec_B for shared features.
+        
+        For shared features, decoder weights must be identical across all layers.
+        This averages the weights across layers for shared features only.
+        """
+        if self.shared_features > 0:
+            with th.no_grad():
+                # Average the decoder weights for shared features across all layers
+                shared_weights = self.decoder.weight[:, :self.shared_features, :].mean(dim=0, keepdim=True)
+                self.decoder.weight[:, :self.shared_features, :] = shared_weights
 
     def get_code_normalization(
         self, select_features: list[int] | None = None
@@ -1461,6 +1481,7 @@ class BatchTopKCrossCoder(CrossCoder):
         activation_mean: th.Tensor | None = None,
         activation_std: th.Tensor | None = None,
         target_rms: float | None = 1.0,
+        shared_features: int = 0,  # Number of features designated as shared
         *args,
         **kwargs,
     ):
@@ -1476,6 +1497,7 @@ class BatchTopKCrossCoder(CrossCoder):
             activation_mean: Optional mean tensor for input/output activation normalization
             activation_std: Optional std tensor for input/output activation normalization
             target_rms: Optional target RMS for input/output activation normalization
+            shared_features: Number of features designated as shared (default: 0)
             *args: Additional positional arguments passed to parent class
             **kwargs: Additional keyword arguments passed to parent class
         """
@@ -1487,6 +1509,7 @@ class BatchTopKCrossCoder(CrossCoder):
             activation_mean=activation_mean,
             activation_std=activation_std,
             target_rms=target_rms,
+            shared_features=shared_features,
             *args,
             **kwargs,
         )

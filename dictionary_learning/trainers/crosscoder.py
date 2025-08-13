@@ -39,6 +39,9 @@ class CrossCoderTrainer(SAETrainer):
         activation_mean: Optional activation mean (default: None)
         activation_std: Optional activation std (default: None)
         target_rms: Target RMS for input activation normalization.
+        shared_features: Number of features designated as shared (default: 0)
+        shared_sparsity_penalty: λs - reduced penalty for shared features (default: None, computed as 0.15 * l1_penalty)
+        standard_sparsity_penalty: λf - normal penalty for standard features (default: None, uses l1_penalty)
     """
 
     def __init__(
@@ -64,6 +67,9 @@ class CrossCoderTrainer(SAETrainer):
         activation_mean: Optional[th.Tensor] = None,
         activation_std: Optional[th.Tensor] = None,
         target_rms: float = 1.0,
+        shared_features: int = 0,  # Number of features designated as shared
+        shared_sparsity_penalty: Optional[float] = None,  # λs (reduced penalty for shared features)
+        standard_sparsity_penalty: Optional[float] = None,  # λf (normal penalty for standard features)
     ):
         super().__init__(seed)
 
@@ -87,6 +93,7 @@ class CrossCoderTrainer(SAETrainer):
                 activation_mean=activation_mean,
                 activation_std=activation_std,
                 target_rms=target_rms,
+                shared_features=shared_features,
                 **dict_class_kwargs,
             )
         else:
@@ -99,6 +106,10 @@ class CrossCoderTrainer(SAETrainer):
         self.l1_penalty = l1_penalty
         self.warmup_steps = warmup_steps
         self.wandb_name = wandb_name
+        
+        # Set up sparsity penalties for shared feature budget
+        self.shared_sparsity_penalty = shared_sparsity_penalty or (l1_penalty * 0.15)  # 0.1-0.2x baseline
+        self.standard_sparsity_penalty = standard_sparsity_penalty or l1_penalty
 
         if device is None:
             self.device = "cuda" if th.cuda.is_available() else "cpu"
@@ -166,7 +177,7 @@ class CrossCoderTrainer(SAETrainer):
         **kwargs,
     ):
         """
-        Compute the training loss including reconstruction and sparsity terms.
+        Compute the training loss with shared feature budget approach.
 
         Args:
             x: Input activations (batch_size, num_layers, activation_dim)
@@ -186,20 +197,46 @@ class CrossCoderTrainer(SAETrainer):
             else x
         )
         x_hat, f = self.ae(x, output_features=True, normalize_activations=False)
+        
+        # Reconstruction loss (unchanged)
         l2_loss = th.linalg.norm(x - x_hat, dim=-1).mean()
         mse_loss = (x - x_hat).pow(2).sum(dim=-1).mean()
         if self.use_mse_loss:
             recon_loss = mse_loss
         else:
             recon_loss = l2_loss
-        l1_loss = f.norm(p=1, dim=-1).mean()
+        
+        # NEW: Split sparsity loss by feature type
+        shared_indices = list(self.ae.shared_feature_indices)
+        standard_indices = list(self.ae.standard_feature_indices)
+        
+        if len(shared_indices) > 0:
+            # Shared features: λs * Σ f_i * ||W_dec,i||  (single norm, not sum across models)
+            f_shared = f[:, shared_indices]
+            shared_decoder_norms = self.ae.decoder.weight[0, shared_indices, :].norm(dim=-1)  # Use first model's weights since they're shared
+            shared_sparsity = (f_shared * shared_decoder_norms.unsqueeze(0)).sum(dim=-1).mean()
+            shared_sparsity_loss = self.shared_sparsity_penalty * shared_sparsity
+        else:
+            shared_sparsity_loss = 0.0
+        
+        if len(standard_indices) > 0:
+            # Standard features: λf * Σ f_i * Σm ||W_dec,i^m||  (sum across models)
+            f_standard = f[:, standard_indices]
+            standard_decoder_norms = self.ae.decoder.weight[:, standard_indices, :].norm(dim=-1).sum(dim=0)  # Sum across models
+            standard_sparsity = (f_standard * standard_decoder_norms.unsqueeze(0)).sum(dim=-1).mean()
+            standard_sparsity_loss = self.standard_sparsity_penalty * standard_sparsity
+        else:
+            standard_sparsity_loss = 0.0
+        
+        total_sparsity_loss = shared_sparsity_loss + standard_sparsity_loss
+        loss = recon_loss + total_sparsity_loss
+        
+        # Dead neuron tracking (for all features)
         deads = (f <= 1e-4).all(dim=0)
         if self.steps_since_active is not None:
             # update steps_since_active
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
-
-        loss = recon_loss + self.l1_penalty * l1_loss
 
         if not logging:
             return loss
@@ -207,7 +244,9 @@ class CrossCoderTrainer(SAETrainer):
             log_dict = {
                 "l2_loss": l2_loss.item(),
                 "mse_loss": mse_loss.item(),
-                "sparsity_loss": l1_loss.item(),
+                "shared_sparsity_loss": shared_sparsity_loss.item() if isinstance(shared_sparsity_loss, th.Tensor) else shared_sparsity_loss,
+                "standard_sparsity_loss": standard_sparsity_loss.item() if isinstance(standard_sparsity_loss, th.Tensor) else standard_sparsity_loss,
+                "total_sparsity_loss": total_sparsity_loss.item(),
                 "loss": loss.item(),
                 "deads": deads if return_deads else None,
             }
@@ -237,6 +276,10 @@ class CrossCoderTrainer(SAETrainer):
         loss = self.loss(activations, step=step, normalize_activations=False)
         loss.backward()
         self.optimizer.step()
+        
+        # NEW: Enforce weight sharing for shared features after optimization step
+        self.ae._enforce_shared_weights()
+        
         self.scheduler.step()
 
         if self.resample_steps is not None and step % self.resample_steps == 0:
@@ -275,6 +318,9 @@ class CrossCoderTrainer(SAETrainer):
             "code_normalization_alpha_sae": self.ae.code_normalization_alpha_sae,
             "code_normalization_alpha_cc": self.ae.code_normalization_alpha_cc,
             "target_rms": self.target_rms,
+            "shared_features": self.ae.shared_features,
+            "shared_sparsity_penalty": self.shared_sparsity_penalty,
+            "standard_sparsity_penalty": self.standard_sparsity_penalty,
         }
 
 
@@ -340,6 +386,9 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
         activation_mean: Optional[th.Tensor] = None,
         activation_std: Optional[th.Tensor] = None,
         target_rms: float = 1.0,
+        shared_features: int = 0,  # Number of features designated as shared
+        shared_sparsity_penalty: Optional[float] = None,  # λs (reduced penalty for shared features)
+        standard_sparsity_penalty: Optional[float] = None,  # λf (normal penalty for standard features)
     ):
         super().__init__(seed)
         assert layer is not None and lm_name is not None
@@ -359,6 +408,11 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
         self.threshold_beta = threshold_beta
         self.threshold_start_step = threshold_start_step
         self.target_rms = target_rms
+        
+        # Set up sparsity penalties for shared feature budget (if needed)
+        # Note: BatchTopK uses auxk_loss instead of L1, but we preserve the structure for consistency
+        self.shared_sparsity_penalty = shared_sparsity_penalty or (auxk_alpha * 0.15) if shared_features > 0 else None
+        self.standard_sparsity_penalty = standard_sparsity_penalty or auxk_alpha
 
         if seed is not None:
             th.manual_seed(seed)
@@ -374,6 +428,7 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
                 activation_mean=activation_mean,
                 activation_std=activation_std,
                 target_rms=target_rms,
+                shared_features=shared_features,
                 **dict_class_kwargs,
             )
         else:
@@ -662,6 +717,10 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
 
         self.optimizer.step()
         self.optimizer.zero_grad()
+        
+        # NEW: Enforce weight sharing for shared features after optimization step
+        self.ae._enforce_shared_weights()
+        
         self.scheduler.step()
 
         return loss.item()
@@ -702,6 +761,9 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
             "submodule_name": self.submodule_name,
             "dict_class_kwargs": {k: str(v) for k, v in self.dict_class_kwargs.items()},
             "target_rms": self.target_rms,
+            "shared_features": self.ae.shared_features,
+            "shared_sparsity_penalty": self.shared_sparsity_penalty,
+            "standard_sparsity_penalty": self.standard_sparsity_penalty,
         }
 
     @staticmethod
