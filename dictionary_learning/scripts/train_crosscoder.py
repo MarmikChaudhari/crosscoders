@@ -12,15 +12,16 @@ from dictionary_learning.cache import PairedActivationCache
 
 
 from dictionary_learning import CrossCoder
-from dictionary_learning.trainers import CrossCoderTrainer
+from dictionary_learning.dictionary import BatchTopKCrossCoder
+from dictionary_learning.trainers import CrossCoderTrainer, BatchTopKCrossCoderTrainer
 from dictionary_learning.training import trainSAE
 import os
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--activation-store-dir", type=str, default="activations")
-    parser.add_argument("--base-model", type=str, default="gemma-2-2b")
-    parser.add_argument("--instruct-model", type=str, default="gemma-2-2b-it")
+    parser.add_argument("--base-model", type=str, default="mixtral-5l-active-27M")
+    parser.add_argument("--instruct-model", type=str, default="tiny-gpt-27M")
     parser.add_argument("--layer", type=int, default=13)
     parser.add_argument("--wandb-entity", type=str, default="")
     parser.add_argument("--disable-wandb", action="store_true")
@@ -40,12 +41,15 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained", type=str, default=None)
     parser.add_argument("--encoder-layers", type=int, default=None, nargs="+")
     parser.add_argument(
-        "--dataset", type=str, nargs="+", default=["fineweb", "lmsys_chat"]
+        "--dataset", type=str, nargs="+", default=["arxiv-code-stories"]
     )
     parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--shared-features", type=int, default=0, help="Number of features designated as shared")
+    parser.add_argument("--shared-features", type=int, default=0, help="number of features designated as shared")
     parser.add_argument("--shared-sparsity-penalty", type=float, default=None, help="λs - reduced penalty for shared features")
     parser.add_argument("--standard-sparsity-penalty", type=float, default=None, help="λf - normal penalty for standard features")
+    parser.add_argument("--trainer-type", type=str, default="standard", choices=["standard", "batchtopk"], help="Type of trainer to use")
+    parser.add_argument("--k", type=int, default=300, help="Number of top features to keep active (BatchTopK only)")
+    parser.add_argument("--auxk-alpha", type=float, default=None, help="Weight for auxiliary loss (BatchTopK only)")
     args = parser.parse_args()
 
     print(f"Training args: {args}")
@@ -78,39 +82,74 @@ if __name__ == "__main__":
 
     device = "cuda" if th.cuda.is_available() else "cpu"
     print(f"Training on device={device}.")
-    trainer_cfg = {
-        "trainer": CrossCoderTrainer,
-        "dict_class": CrossCoder,
-        "activation_dim": activation_dim,
-        "dict_size": dictionary_size,
-        "lr": args.lr,
-        "resample_steps": args.resample_steps,
-        "device": device,
-        "warmup_steps": 1000,
-        "layer": args.layer,
-        "lm_name": f"{args.instruct_model}-{args.base_model}",
-        "compile": False,
-        "wandb_name": f"L{args.layer}-mu{args.mu:.1e}-lr{args.lr:.0e}"
-        + (f"-{args.run_name}" if args.run_name is not None else ""),
-        "l1_penalty": args.mu,
-        "shared_features": args.shared_features,
-        "shared_sparsity_penalty": args.shared_sparsity_penalty,
-        "standard_sparsity_penalty": args.standard_sparsity_penalty,
-        "dict_class_kwargs": {
-            "same_init_for_all_layers": args.same_init_for_all_layers,
-            "norm_init_scale": args.norm_init_scale,
-            "init_with_transpose": args.init_with_transpose,
-            "encoder_layers": args.encoder_layers,
-            "code_normalization": "MIXED",
-            "code_normalization_alpha_sae": 0.7,
-            "code_normalization_alpha_cc": 0.3,
-        },
-        "pretrained_ae": (
-            CrossCoder.from_pretrained(args.pretrained)
-            if args.pretrained is not None
-            else None
-        ),
-    }
+    
+    # Configure trainer based on type
+    if args.trainer_type == "batchtopk":
+        trainer_class = BatchTopKCrossCoderTrainer
+        dict_class = BatchTopKCrossCoder
+        auxk_alpha = args.auxk_alpha or (1/32)  # Default from paper
+        
+        trainer_cfg = {
+            "trainer": trainer_class,
+            "dict_class": dict_class,
+            "steps": args.max_steps or 40000,
+            "activation_dim": activation_dim,
+            "dict_size": dictionary_size,
+            "k": args.k,
+            "lr": args.lr,
+            "auxk_alpha": auxk_alpha,
+            "device": device,
+            "warmup_steps": 1000,
+            "layer": args.layer,
+            "lm_name": f"{args.instruct_model}-{args.base_model}",
+            "wandb_name": f"L{args.layer}-k{args.k}-auxk{auxk_alpha:.1e}-lr{args.lr:.0e}"
+            + (f"-{args.run_name}" if args.run_name is not None else ""),
+            "shared_features": args.shared_features,
+            "shared_sparsity_penalty": args.shared_sparsity_penalty,
+            "standard_sparsity_penalty": args.standard_sparsity_penalty,
+            "dict_class_kwargs": {
+                "code_normalization": "MIXED",
+                "code_normalization_alpha_sae": 0.7,
+                "code_normalization_alpha_cc": 0.3,
+            },
+        }
+    else:  # standard CrossCoder
+        trainer_class = CrossCoderTrainer
+        dict_class = CrossCoder
+        
+        trainer_cfg = {
+            "trainer": trainer_class,
+            "dict_class": dict_class,
+            "activation_dim": activation_dim,
+            "dict_size": dictionary_size,
+            "lr": args.lr,
+            "resample_steps": args.resample_steps,
+            "device": device,
+            "warmup_steps": 1000,
+            "layer": args.layer,
+            "lm_name": f"{args.instruct_model}-{args.base_model}",
+            "compile": False,
+            "wandb_name": f"L{args.layer}-mu{args.mu:.1e}-lr{args.lr:.0e}"
+            + (f"-{args.run_name}" if args.run_name is not None else ""),
+            "l1_penalty": args.mu,
+            "shared_features": args.shared_features,
+            "shared_sparsity_penalty": args.shared_sparsity_penalty,
+            "standard_sparsity_penalty": args.standard_sparsity_penalty,
+            "dict_class_kwargs": {
+                "same_init_for_all_layers": args.same_init_for_all_layers,
+                "norm_init_scale": args.norm_init_scale,
+                "init_with_transpose": args.init_with_transpose,
+                "encoder_layers": args.encoder_layers,
+                "code_normalization": "MIXED",
+                "code_normalization_alpha_sae": 0.7,
+                "code_normalization_alpha_cc": 0.3,
+            },
+            "pretrained_ae": (
+                CrossCoder.from_pretrained(args.pretrained)
+                if args.pretrained is not None
+                else None
+            ),
+        }
 
     validation_size = 10**6
     train_dataset, validation_dataset = th.utils.data.random_split(

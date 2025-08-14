@@ -669,7 +669,32 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
         mse_loss = e.pow(2).sum(dim=-1).mean()
         l2_loss = th.linalg.norm(e, dim=-1).mean()
         auxk_loss = self.get_auxiliary_loss(e.detach(), post_relu_f, post_relu_f_scaled)
-        loss = l2_loss + self.auxk_alpha * auxk_loss
+        
+        # Add shared/standard feature penalties (similar to CrossCoderTrainer)
+        shared_indices = list(self.ae.shared_feature_indices)
+        standard_indices = list(self.ae.standard_feature_indices)
+        
+        if len(shared_indices) > 0:
+            # Shared features: λs * Σ f_i * ||W_dec,i||  (single norm, not sum across models)
+            f_shared = f[:, shared_indices]
+            shared_decoder_weights = self.ae.decoder.weight[:, shared_indices, :].mean(dim=0)  # Average across layers
+            shared_decoder_norms = shared_decoder_weights.norm(dim=-1)
+            shared_sparsity = (f_shared * shared_decoder_norms.unsqueeze(0)).sum(dim=-1).mean()
+            shared_sparsity_loss = self.shared_sparsity_penalty * shared_sparsity
+        else:
+            shared_sparsity_loss = 0.0
+        
+        if len(standard_indices) > 0:
+            # Standard features: λf * Σ f_i * Σm ||W_dec,i^m||  (sum across models)
+            f_standard = f[:, standard_indices]
+            standard_decoder_norms = self.ae.decoder.weight[:, standard_indices, :].norm(dim=-1).sum(dim=0)  # Sum across models
+            standard_sparsity = (f_standard * standard_decoder_norms.unsqueeze(0)).sum(dim=-1).mean()
+            standard_sparsity_loss = self.standard_sparsity_penalty * standard_sparsity
+        else:
+            standard_sparsity_loss = 0.0
+        
+        total_sparsity_loss = shared_sparsity_loss + standard_sparsity_loss
+        loss = l2_loss + self.auxk_alpha * auxk_loss + total_sparsity_loss
 
         if not logging:
             return loss
@@ -682,6 +707,9 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
                     "mse_loss": mse_loss.item(),
                     "l2_loss": l2_loss.item(),
                     "auxk_loss": auxk_loss.item(),
+                    "shared_sparsity_loss": shared_sparsity_loss.item() if isinstance(shared_sparsity_loss, th.Tensor) else shared_sparsity_loss,
+                    "standard_sparsity_loss": standard_sparsity_loss.item() if isinstance(standard_sparsity_loss, th.Tensor) else standard_sparsity_loss,
+                    "total_sparsity_loss": total_sparsity_loss.item(),
                     "loss": loss.item(),
                     "deads": ~did_fire,
                     "threshold": self.ae.threshold.tolist(),
